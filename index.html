@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dragon Boat Paddle Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            cursor: crosshair;
+            touch-action: none; /* Prevents default touch actions like scrolling */
+            position: relative; /* Ensure canvas is in the stacking context */
+            z-index: 5; /* Canvas on top of the image */
+        }
+        .info-panel, .controls-panel {
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        #bgContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* This will contain the image */
+        }
+        #bgImage {
+            position: absolute;
+            pointer-events: none; /* Let events pass through to the canvas or container */
+            z-index: 1;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen m-0 p-4">
+
+    <div class="w-full max-w-5xl flex-grow flex flex-col items-center">
+        <div class="relative w-full max-w-4xl aspect-video bg-gray-800 rounded-xl shadow-2xl overflow-hidden border-2 border-gray-700 mt-4">
+            <div id="bgContainer">
+                <img id="bgImage" src="" alt="User uploaded background">
+            </div>
+            <canvas id="paddleCanvas"></canvas>
+        </div>
+    
+        <div class="mt-4 flex items-center space-x-4">
+            <button id="anchorBtn" class="px-6 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-opacity-75">
+                Set Anchor Point
+            </button>
+            <button id="bgModeBtn" class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75">
+                Control Background
+            </button>
+             <button id="resetBtn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75">
+                Reset
+            </button>
+        </div>
+    </div>
+
+
+    <div id="infoPanel" class="info-panel absolute top-4 left-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
+        <h2 class="text-lg font-bold text-white mb-2">Instructions</h2>
+        <ul class="list-disc list-inside space-y-1">
+            <li><strong class="text-cyan-400">Move Paddle:</strong> Right-click & drag, or two-finger drag.</li>
+            <li><strong class="text-cyan-400">Rotate Paddle:</strong> Left-click & drag tip, or one-finger drag.</li>
+            <li><strong class="text-cyan-400">Set Anchor:</strong> Use the button, then click on the paddle.</li>
+            <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag image to move.</li>
+        </ul>
+    </div>
+
+    <div class="controls-panel absolute top-4 right-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
+        <h2 class="text-lg font-bold text-white mb-2">Background</h2>
+        <input type="file" id="bgUpload" class="hidden" accept="image/*">
+        <button id="uploadBtn" class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
+            Upload Image
+        </button>
+        <div id="bgControls" class="hidden mt-4">
+            <label for="bgScale" class="block mb-1">Scale:</label>
+            <input type="range" id="bgScale" min="0.1" max="5" step="0.05" value="1" class="w-full">
+        </div>
+    </div>
+
+
+    <script>
+        // --- DOM Elements ---
+        const canvas = document.getElementById('paddleCanvas');
+        const ctx = canvas.getContext('2d');
+        const anchorBtn = document.getElementById('anchorBtn');
+        const bgModeBtn = document.getElementById('bgModeBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const bgUpload = document.getElementById('bgUpload');
+        const bgContainer = document.getElementById('bgContainer');
+        const bgImage = document.getElementById('bgImage');
+        const bgControls = document.getElementById('bgControls');
+        const bgScale = document.getElementById('bgScale');
+
+        // --- State ---
+        let isSettingAnchor = false;
+        let isBgMode = false;
+        let paddle = {};
+        const waterLevel = 300;
+
+        // Interaction states
+        let isRotating = false;
+        let isRightDragging = false;
+        let isBgDragging = false;
+        let dragStart = { x: 0, y: 0 };
+        let initialPaddlePos = {};
+        let initialDistances = { tip: 0, handle: 0 };
+        
+        // Background image state
+        let bgImageState = { naturalWidth: 0, naturalHeight: 0, scale: 1, x: 0, y: 0 };
+        let initialBgPos = { x: 0, y: 0 };
+
+
+        // --- Initialization and Resizing ---
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            if (bgImage.src) {
+                updateImageTransform();
+            }
+            draw();
+        }
+
+        function init() {
+            paddle = {
+                handle: { x: canvas.width / 2, y: 50 },
+                tip: { x: canvas.width / 2, y: 300 },
+                length: 250,
+                angle: Math.PI / 2,
+                anchor: null
+            };
+            isSettingAnchor = false;
+            anchorBtn.textContent = 'Set Anchor Point';
+            anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
+            anchorBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+            
+            isBgMode = false;
+            bgModeBtn.textContent = 'Control Background';
+            bgModeBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
+            bgModeBtn.classList.add('bg-purple-600', 'hover:bg-purple-700');
+            canvas.style.pointerEvents = 'auto';
+
+
+            // Reset background
+            bgImage.src = '';
+            bgControls.classList.add('hidden');
+            bgScale.value = 1;
+            bgImageState = { naturalWidth: 0, naturalHeight: 0, scale: 1, x: 0, y: 0 };
+            updateImageTransform();
+
+            draw();
+        }
+
+        // --- Drawing Functions ---
+        function drawPaddle() {
+            ctx.save();
+            ctx.lineWidth = 8;
+            ctx.lineCap = 'round';
+
+            const bladeStartRatio = 0.6; // Top 60% is shaft
+            const bladeStartPoint = {
+                x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
+                y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
+            };
+
+            // Shaft (top 60%)
+            ctx.strokeStyle = '#E2E8F0'; // Light gray
+            ctx.beginPath();
+            ctx.moveTo(paddle.handle.x, paddle.handle.y);
+            ctx.lineTo(bladeStartPoint.x, bladeStartPoint.y);
+            ctx.stroke();
+
+            // Blade (bottom 40%)
+            ctx.strokeStyle = '#3b82f6'; // Dark Blue
+            ctx.beginPath();
+            ctx.moveTo(bladeStartPoint.x, bladeStartPoint.y);
+            ctx.lineTo(paddle.tip.x, paddle.tip.y);
+            ctx.stroke();
+
+            // Handle
+            ctx.strokeStyle = '#E2E8F0';
+            ctx.beginPath();
+            ctx.moveTo(paddle.handle.x - 20, paddle.handle.y);
+            ctx.lineTo(paddle.handle.x + 20, paddle.handle.y);
+            ctx.lineWidth = 12;
+            ctx.stroke();
+
+            if (paddle.anchor) {
+                const anchorX = paddle.handle.x + paddle.anchor.x;
+                const anchorY = paddle.handle.y + paddle.anchor.y;
+                ctx.fillStyle = '#38BDF8';
+                ctx.beginPath();
+                ctx.arc(anchorX, anchorY, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawWater() {
+            // Draw the main water surface line
+            ctx.beginPath();
+            ctx.moveTo(0, waterLevel);
+            ctx.lineTo(canvas.width, waterLevel);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Calculate blade start point
+            const bladeStartRatio = 0.6;
+            const bladeStartPoint = {
+                x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
+                y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
+            };
+
+            // Exit if the blade tip is above the water
+            if (paddle.tip.y <= waterLevel) return;
+            // Exit if the paddle is upside down and the blade isn't in the water
+            if (bladeStartPoint.y > paddle.tip.y) return;
+
+            // Find where the paddle shaft enters the water
+            const entryPoint = lineIntersection(paddle.handle, paddle.tip, {x:0, y:waterLevel}, {x:canvas.width, y:waterLevel});
+            
+            // If there's no clear entry point (e.g., paddle is horizontal and fully submerged), we can't draw.
+            if (!entryPoint) return;
+
+            // Determine the top-most point of the submerged part of the BLADE
+            let submergedBladeTopPoint;
+            if (entryPoint.y < bladeStartPoint.y) {
+                // Case 1: Water level is above the blade's start. The entire blade is submerged.
+                // The colored area starts from the top of the blade.
+                submergedBladeTopPoint = bladeStartPoint;
+            } else {
+                // Case 2: Water level intersects the blade.
+                // The colored area starts from the water line.
+                submergedBladeTopPoint = entryPoint;
+            }
+
+            // The rectangle's vertical bounds are defined by the submerged blade part.
+            const rectTop = submergedBladeTopPoint.y;
+            const rectBottom = paddle.tip.y;
+
+            // If there's no vertical height to the submerged part, do nothing.
+            if (rectBottom <= rectTop) return;
+
+            // The point for splitting the polygons is the top of the submerged blade part.
+            const intersection = submergedBladeTopPoint;
+
+            const leftPolygon = [
+                { x: 0, y: rectTop }, 
+                intersection, 
+                paddle.tip,
+                { x: paddle.tip.x, y: rectBottom }, 
+                { x: 0, y: rectBottom }
+            ];
+            const rightPolygon = [
+                { x: canvas.width, y: rectTop }, 
+                intersection, 
+                paddle.tip,
+                { x: paddle.tip.x, y: rectBottom }, 
+                { x: canvas.width, y: rectBottom }
+            ];
+
+            // Draw left polygon (purple)
+            ctx.fillStyle = 'rgba(168, 85, 247, 0.7)';
+            ctx.beginPath();
+            leftPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw right polygon (red)
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
+            ctx.beginPath();
+            rightPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawWater();
+            drawPaddle();
+        }
+
+        // --- Event Handlers ---
+        function handleMouseDown(e) {
+            const pos = getMousePos(e);
+            
+            if (isBgMode) {
+                isBgDragging = true;
+                dragStart = pos;
+                initialBgPos = { x: bgImageState.x, y: bgImageState.y };
+                return;
+            }
+
+            if (isSettingAnchor) {
+                const closestPoint = closestPointOnLine(paddle.handle, paddle.tip, pos);
+                paddle.anchor = { x: closestPoint.x - paddle.handle.x, y: closestPoint.y - paddle.handle.y };
+                isSettingAnchor = false;
+                anchorBtn.textContent = 'Set Anchor Point';
+                anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
+                anchorBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
+                draw();
+                return;
+            }
+
+            if (e.button === 0) { // Left-click for rotation
+                isRotating = true;
+                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
+                initialDistances = { tip: distance(pivot, paddle.tip), handle: distance(pivot, paddle.handle) };
+            } else if (e.button === 2) { // Right-click for dragging
+                isRightDragging = true;
+                dragStart = pos;
+                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
+            }
+        }
+
+        function handleMouseMove(e) {
+            const pos = getMousePos(e);
+            const dx = pos.x - dragStart.x;
+            const dy = pos.y - dragStart.y;
+
+            if (isBgDragging) {
+                bgImageState.x = initialBgPos.x + dx;
+                bgImageState.y = initialBgPos.y + dy;
+                updateImageTransform();
+                return;
+            }
+
+            if (!isRotating && !isRightDragging) return;
+
+            if (isRightDragging) {
+                paddle.handle.x = initialPaddlePos.handle.x + dx;
+                paddle.handle.y = initialPaddlePos.handle.y + dy;
+                paddle.tip.x = initialPaddlePos.tip.x + dx;
+                paddle.tip.y = initialPaddlePos.tip.y + dy;
+            }
+
+            if (isRotating) {
+                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
+                const angle = Math.atan2(pos.y - pivot.y, pos.x - pivot.x);
+                paddle.tip.x = pivot.x + Math.cos(angle) * initialDistances.tip;
+                paddle.tip.y = pivot.y + Math.sin(angle) * initialDistances.tip;
+                paddle.handle.x = pivot.x - Math.cos(angle) * initialDistances.handle;
+                paddle.handle.y = pivot.y - Math.sin(angle) * initialDistances.handle;
+            }
+            draw();
+        }
+
+        function handleMouseUp() {
+            isRotating = false;
+            isRightDragging = false;
+            isBgDragging = false;
+        }
+
+        // --- Touch Handlers ---
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touches = e.touches;
+            if (isBgMode) {
+                if (touches.length === 1) {
+                    isBgDragging = true;
+                    dragStart = getTouchPos(touches[0]);
+                    initialBgPos = { x: bgImageState.x, y: bgImageState.y };
+                }
+                return;
+            }
+
+            if (touches.length === 1) { // Single finger for rotation
+                isRotating = true;
+                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
+                initialDistances = { tip: distance(pivot, paddle.tip), handle: distance(pivot, paddle.handle) };
+            } else if (touches.length === 2) { // Two fingers for dragging
+                isRightDragging = true;
+                dragStart = getMidpoint(touches[0], touches[1]);
+                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
+            }
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const touches = e.touches;
+            if (isBgDragging && touches.length === 1) {
+                const pos = getTouchPos(touches[0]);
+                const dx = pos.x - dragStart.x;
+                const dy = pos.y - dragStart.y;
+                bgImageState.x = initialBgPos.x + dx;
+                bgImageState.y = initialBgPos.y + dy;
+                updateImageTransform();
+                return;
+            }
+
+
+            if (isRotating && touches.length === 1) {
+                const pos = getTouchPos(touches[0]);
+                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
+                const angle = Math.atan2(pos.y - pivot.y, pos.x - pivot.x);
+                paddle.tip.x = pivot.x + Math.cos(angle) * initialDistances.tip;
+                paddle.tip.y = pivot.y + Math.sin(angle) * initialDistances.tip;
+                paddle.handle.x = pivot.x - Math.cos(angle) * initialDistances.handle;
+                paddle.handle.y = pivot.y - Math.sin(angle) * initialDistances.handle;
+            } else if (isRightDragging && touches.length === 2) {
+                const pos = getMidpoint(touches[0], touches[1]);
+                const dx = pos.x - dragStart.x;
+                const dy = pos.y - dragStart.y;
+                paddle.handle.x = initialPaddlePos.handle.x + dx;
+                paddle.handle.y = initialPaddlePos.handle.y + dy;
+                paddle.tip.x = initialPaddlePos.tip.x + dx;
+                paddle.tip.y = initialPaddlePos.tip.y + dy;
+            }
+            draw();
+        }
+
+        function handleTouchEnd() {
+            isRotating = false;
+            isRightDragging = false;
+            isBgDragging = false;
+        }
+
+        // --- Background Image Handlers ---
+        function handleImageUpload(e) {
+            const file = e.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    bgImage.src = event.target.result;
+                    bgImage.onload = () => {
+                        bgImageState.naturalWidth = bgImage.naturalWidth;
+                        bgImageState.naturalHeight = bgImage.naturalHeight;
+                        bgControls.classList.remove('hidden');
+                        bgScale.value = 1;
+                        bgImageState.scale = 1;
+                        bgImageState.x = (bgContainer.clientWidth - bgImage.naturalWidth) / 2;
+                        bgImageState.y = (bgContainer.clientHeight - bgImage.naturalHeight) / 2;
+                        updateImageTransform();
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function handleImageScale(e) {
+            bgImageState.scale = parseFloat(e.target.value);
+            updateImageTransform();
+        }
+
+        function updateImageTransform() {
+            const imgWidth = bgImageState.naturalWidth * bgImageState.scale;
+            const imgHeight = bgImageState.naturalHeight * bgImageState.scale;
+            bgImage.style.width = `${imgWidth}px`;
+            bgImage.style.height = `${imgHeight}px`;
+            bgImage.style.left = `${bgImageState.x}px`;
+            bgImage.style.top = `${bgImageState.y}px`;
+        }
+
+        // --- Utility Functions ---
+        function getMousePos(evt) {
+            const rect = canvas.getBoundingClientRect();
+            return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+        }
+        function getTouchPos(touch) {
+            const rect = canvas.getBoundingClientRect();
+            return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+        }
+        function getMidpoint(t1, t2) {
+            const p1 = getTouchPos(t1);
+            const p2 = getTouchPos(t2);
+            return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        }
+        function distance(p1, p2) { return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2)); }
+        function lineIntersection(p1, p2, p3, p4) {
+            const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+            if (den === 0) return null;
+            const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den;
+            const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den;
+            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+                return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+            }
+            return null;
+        }
+        function closestPointOnLine(p1, p2, p) {
+            const l2 = Math.pow(distance(p1, p2), 2);
+            if (l2 === 0) return p1;
+            const t = Math.max(0, Math.min(1, ((p.x - p1.x) * (p2.x - p1.x) + (p.y - p1.y) * (p2.y - p1.y)) / l2));
+            return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+        }
+
+        // --- Event Listener Setup ---
+        const containerForMouse = canvas.parentElement;
+        containerForMouse.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        containerForMouse.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Touch Listeners
+        containerForMouse.addEventListener('touchstart', handleTouchStart, { passive: false });
+        window.addEventListener('touchmove', handleTouchMove, { passive: false });
+        window.addEventListener('touchend', handleTouchEnd);
+        window.addEventListener('touchcancel', handleTouchEnd);
+
+
+        anchorBtn.addEventListener('click', () => {
+            isSettingAnchor = !isSettingAnchor;
+            anchorBtn.textContent = isSettingAnchor ? 'Cancel Setting Anchor' : 'Set Anchor Point';
+            anchorBtn.classList.toggle('bg-yellow-500', isSettingAnchor);
+            anchorBtn.classList.toggle('hover:bg-yellow-600', isSettingAnchor);
+            anchorBtn.classList.toggle('bg-cyan-600', !isSettingAnchor);
+            anchorBtn.classList.toggle('hover:bg-cyan-700', !isSettingAnchor);
+        });
+        
+        bgModeBtn.addEventListener('click', () => {
+            isBgMode = !isBgMode;
+            bgModeBtn.textContent = isBgMode ? 'Control Paddle' : 'Control Background';
+            bgModeBtn.classList.toggle('bg-green-500', isBgMode);
+            bgModeBtn.classList.toggle('hover:bg-green-600', isBgMode);
+            bgModeBtn.classList.toggle('bg-purple-600', !isBgMode);
+            bgModeBtn.classList.toggle('hover:bg-purple-700', !isBgMode);
+            // In BG mode, let events go to the container. Otherwise, canvas handles them.
+            canvas.style.pointerEvents = isBgMode ? 'none' : 'auto';
+        });
+
+        resetBtn.addEventListener('click', init);
+        uploadBtn.addEventListener('click', () => bgUpload.click());
+        bgUpload.addEventListener('change', handleImageUpload);
+        bgScale.addEventListener('input', handleImageScale);
+
+        // --- Start ---
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        init();
+    </script>
+</body>
+</html>
