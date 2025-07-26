@@ -20,6 +20,17 @@
         .info-panel, .controls-panel {
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+        }
+        .panel-hidden-left {
+            opacity: 0;
+            transform: translateX(-120%); /* Hide to the left */
+            pointer-events: none;
+        }
+        .panel-hidden-right {
+            opacity: 0;
+            transform: translateX(120%); /* Hide to the right */
+            pointer-events: none;
         }
         #bgContainer {
             position: absolute;
@@ -56,12 +67,18 @@
              <button id="resetBtn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75">
                 Reset
             </button>
+            <button id="showInstructionsBtn" class="hidden px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
+                Show Instructions
+            </button>
         </div>
     </div>
 
 
     <div id="infoPanel" class="info-panel absolute top-4 left-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
-        <h2 class="text-lg font-bold text-white mb-2">Instructions</h2>
+        <div class="flex justify-between items-center mb-2">
+            <h2 class="text-lg font-bold text-white">Instructions</h2>
+            <button id="hideInstructionsBtn" class="text-xs text-gray-400 hover:text-white">Hide</button>
+        </div>
         <ul class="list-disc list-inside space-y-1">
             <li><strong class="text-cyan-400">Move Paddle:</strong> Right-click & drag, or two-finger drag.</li>
             <li><strong class="text-cyan-400">Rotate Paddle:</strong> Left-click & drag tip, or one-finger drag.</li>
@@ -70,7 +87,7 @@
         </ul>
     </div>
 
-    <div class="controls-panel absolute top-4 right-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
+    <div id="controlsPanel" class="controls-panel panel-hidden-right absolute top-4 right-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
         <h2 class="text-lg font-bold text-white mb-2">Background</h2>
         <input type="file" id="bgUpload" class="hidden" accept="image/*">
         <button id="uploadBtn" class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
@@ -94,14 +111,19 @@
         const bgUpload = document.getElementById('bgUpload');
         const bgContainer = document.getElementById('bgContainer');
         const bgImage = document.getElementById('bgImage');
+        const controlsPanel = document.getElementById('controlsPanel');
         const bgControls = document.getElementById('bgControls');
         const bgScale = document.getElementById('bgScale');
+        const infoPanel = document.getElementById('infoPanel');
+        const hideInstructionsBtn = document.getElementById('hideInstructionsBtn');
+        const showInstructionsBtn = document.getElementById('showInstructionsBtn');
 
         // --- State ---
         let isSettingAnchor = false;
         let isBgMode = false;
         let paddle = {};
         const waterLevel = 300;
+        let instructionTimeout;
 
         // Interaction states
         let isRotating = false;
@@ -145,14 +167,21 @@
             bgModeBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
             bgModeBtn.classList.add('bg-purple-600', 'hover:bg-purple-700');
             canvas.style.pointerEvents = 'auto';
+            controlsPanel.classList.add('panel-hidden-right');
 
 
             // Reset background
+            bgUpload.value = null; // BUG FIX: Clear the file input
             bgImage.src = '';
             bgControls.classList.add('hidden');
             bgScale.value = 1;
             bgImageState = { naturalWidth: 0, naturalHeight: 0, scale: 1, x: 0, y: 0 };
             updateImageTransform();
+
+            // Instructions Panel Logic
+            showInstructions();
+            clearTimeout(instructionTimeout);
+            instructionTimeout = setTimeout(hideInstructions, 60000);
 
             draw();
         }
@@ -218,62 +247,35 @@
                 y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
             };
 
-            // Exit if the blade tip is above the water
-            if (paddle.tip.y <= waterLevel) return;
-            // Exit if the paddle is upside down and the blade isn't in the water
-            if (bladeStartPoint.y > paddle.tip.y) return;
+            if (paddle.tip.y <= waterLevel || bladeStartPoint.y > paddle.tip.y) return;
 
-            // Find where the paddle shaft enters the water
             const entryPoint = lineIntersection(paddle.handle, paddle.tip, {x:0, y:waterLevel}, {x:canvas.width, y:waterLevel});
-            
-            // If there's no clear entry point (e.g., paddle is horizontal and fully submerged), we can't draw.
             if (!entryPoint) return;
 
-            // Determine the top-most point of the submerged part of the BLADE
-            let submergedBladeTopPoint;
-            if (entryPoint.y < bladeStartPoint.y) {
-                // Case 1: Water level is above the blade's start. The entire blade is submerged.
-                // The colored area starts from the top of the blade.
-                submergedBladeTopPoint = bladeStartPoint;
-            } else {
-                // Case 2: Water level intersects the blade.
-                // The colored area starts from the water line.
-                submergedBladeTopPoint = entryPoint;
-            }
+            let submergedBladeTopPoint = (entryPoint.y < bladeStartPoint.y) ? bladeStartPoint : entryPoint;
 
-            // The rectangle's vertical bounds are defined by the submerged blade part.
             const rectTop = submergedBladeTopPoint.y;
             const rectBottom = paddle.tip.y;
 
-            // If there's no vertical height to the submerged part, do nothing.
             if (rectBottom <= rectTop) return;
 
-            // The point for splitting the polygons is the top of the submerged blade part.
             const intersection = submergedBladeTopPoint;
 
             const leftPolygon = [
-                { x: 0, y: rectTop }, 
-                intersection, 
-                paddle.tip,
-                { x: paddle.tip.x, y: rectBottom }, 
-                { x: 0, y: rectBottom }
+                { x: 0, y: rectTop }, intersection, paddle.tip,
+                { x: paddle.tip.x, y: rectBottom }, { x: 0, y: rectBottom }
             ];
             const rightPolygon = [
-                { x: canvas.width, y: rectTop }, 
-                intersection, 
-                paddle.tip,
-                { x: paddle.tip.x, y: rectBottom }, 
-                { x: canvas.width, y: rectBottom }
+                { x: canvas.width, y: rectTop }, intersection, paddle.tip,
+                { x: paddle.tip.x, y: rectBottom }, { x: canvas.width, y: rectBottom }
             ];
 
-            // Draw left polygon (purple)
             ctx.fillStyle = 'rgba(168, 85, 247, 0.7)';
             ctx.beginPath();
             leftPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
             ctx.closePath();
             ctx.fill();
 
-            // Draw right polygon (red)
             ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
             ctx.beginPath();
             rightPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
@@ -282,10 +284,25 @@
         }
 
         function draw() {
+            // BUG FIX: Prevent drawing before paddle is initialized
+            if (!paddle || !paddle.handle) return;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawWater();
             drawPaddle();
         }
+
+        // --- UI Panel Logic ---
+        function hideInstructions() {
+            infoPanel.classList.add('panel-hidden-left');
+            showInstructionsBtn.classList.remove('hidden');
+            clearTimeout(instructionTimeout);
+        }
+
+        function showInstructions() {
+            infoPanel.classList.remove('panel-hidden-left');
+            showInstructionsBtn.classList.add('hidden');
+        }
+
 
         // --- Event Handlers ---
         function handleMouseDown(e) {
@@ -520,14 +537,17 @@
             bgModeBtn.classList.toggle('hover:bg-green-600', isBgMode);
             bgModeBtn.classList.toggle('bg-purple-600', !isBgMode);
             bgModeBtn.classList.toggle('hover:bg-purple-700', !isBgMode);
-            // In BG mode, let events go to the container. Otherwise, canvas handles them.
+            
             canvas.style.pointerEvents = isBgMode ? 'none' : 'auto';
+            controlsPanel.classList.toggle('panel-hidden-right', !isBgMode);
         });
 
         resetBtn.addEventListener('click', init);
         uploadBtn.addEventListener('click', () => bgUpload.click());
         bgUpload.addEventListener('change', handleImageUpload);
         bgScale.addEventListener('input', handleImageScale);
+        hideInstructionsBtn.addEventListener('click', hideInstructions);
+        showInstructionsBtn.addEventListener('click', showInstructions);
 
         // --- Start ---
         window.addEventListener('resize', resizeCanvas);
