@@ -47,9 +47,9 @@
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen m-0 p-4">
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen m-0 p-2 sm:p-4">
 
-    <h1 class="text-3xl font-bold text-white mb-4">Paddle Water Catching Visualiser</h1>
+    <h1 class="text-xl sm:text-3xl font-bold text-white my-2 text-center">Paddle Water Catching Visualiser</h1>
 
     <div class="w-full max-w-5xl flex-grow flex flex-col items-center">
         <div class="relative w-full max-w-4xl aspect-video bg-gray-800 rounded-xl shadow-2xl overflow-hidden border-2 border-gray-700">
@@ -59,40 +59,40 @@
             <canvas id="paddleCanvas"></canvas>
         </div>
     
-        <div class="mt-4 flex items-center space-x-4">
-            <button id="anchorBtn" class="px-6 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-opacity-75">
-                Set Anchor Point
+        <div class="mt-4 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
+            <button id="anchorBtn" class="px-4 py-2 text-sm sm:px-6 sm:text-base bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-opacity-75">
+                Set Anchor
             </button>
-            <button id="bgModeBtn" class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75">
-                Control Background
+            <button id="bgModeBtn" class="px-4 py-2 text-sm sm:px-6 sm:text-base bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75">
+                Control BG
             </button>
-             <button id="resetBtn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75">
+             <button id="resetBtn" class="px-4 py-2 text-sm sm:px-6 sm:text-base bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75">
                 Reset
             </button>
-            <button id="showInstructionsBtn" class="hidden px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
-                Show Instructions
+            <button id="showInstructionsBtn" class="hidden px-4 py-2 text-sm sm:px-6 sm:text-base bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
+                Instructions
             </button>
         </div>
     </div>
 
 
-    <div id="infoPanel" class="info-panel absolute top-4 left-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
+    <div id="infoPanel" class="info-panel absolute top-4 left-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 max-w-[180px] sm:max-w-xs z-10">
         <div class="flex justify-between items-center mb-2">
-            <h2 class="text-lg font-bold text-white">Instructions</h2>
+            <h2 class="text-base sm:text-lg font-bold text-white">Instructions</h2>
             <button id="hideInstructionsBtn" class="text-xs text-gray-400 hover:text-white">Hide</button>
         </div>
         <ul class="list-disc list-inside space-y-1">
-            <li><strong class="text-cyan-400">Move Paddle:</strong> Right-click & drag, or two-finger drag.</li>
-            <li><strong class="text-cyan-400">Rotate Paddle:</strong> Left-click & drag tip, or one-finger drag.</li>
-            <li><strong class="text-cyan-400">Set Anchor:</strong> Use the button, then click on the paddle.</li>
-            <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag image to move.</li>
+            <li><strong class="text-cyan-400">Move:</strong> Right-click/2-finger drag.</li>
+            <li><strong class="text-cyan-400">Rotate:</strong> Left-click/1-finger drag.</li>
+            <li><strong class="text-cyan-400">Set Anchor:</strong> Use button, then click paddle.</li>
+            <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag.</li>
         </ul>
     </div>
 
-    <div id="controlsPanel" class="controls-panel panel-hidden-right absolute top-4 right-4 bg-black bg-opacity-50 p-4 rounded-lg text-sm text-gray-300 max-w-xs z-10">
-        <h2 class="text-lg font-bold text-white mb-2">Background</h2>
+    <div id="controlsPanel" class="controls-panel panel-hidden-right absolute top-4 right-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 max-w-[180px] sm:max-w-xs z-10">
+        <h2 class="text-base sm:text-lg font-bold text-white mb-2">Background</h2>
         <input type="file" id="bgUpload" class="hidden" accept="image/*">
-        <button id="uploadBtn" class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
+        <button id="uploadBtn" class="w-full px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200">
             Upload Image
         </button>
         <div id="bgControls" class="hidden mt-4">
@@ -144,34 +144,49 @@
         // --- Initialization and Resizing ---
         function resizeCanvas() {
             const container = canvas.parentElement;
+            const oldHeight = canvas.height || container.clientHeight;
+            
             canvas.width = container.clientWidth;
             canvas.height = container.clientHeight;
+            
+            const scaleY = canvas.height / oldHeight;
+
             waterLevel = canvas.height * (2 / 3);
             if (bgImage.src) {
                 updateImageTransform();
             }
+
             if (!paddle.handle) {
                 init();
             } else {
+                // Scale existing paddle to new screen size
+                paddle.handle.x *= scaleY;
+                paddle.handle.y *= scaleY;
+                paddle.tip.x *= scaleY;
+                paddle.tip.y *= scaleY;
+                paddle.length *= scaleY;
                 draw();
             }
         }
 
         function init() {
             waterLevel = canvas.height * (2 / 3);
+            const paddleLength = canvas.height * 0.6; // Responsive paddle length
+            const initialY = canvas.height / 3;
+
             paddle = {
-                handle: { x: canvas.width / 2, y: canvas.height / 2 - 125 },
-                tip: { x: canvas.width / 2, y: canvas.height / 2 + 125 },
-                length: 250,
+                handle: { x: canvas.width / 2, y: initialY - paddleLength / 2 },
+                tip: { x: canvas.width / 2, y: initialY + paddleLength / 2 },
+                length: paddleLength,
                 anchorRatio: null
             };
             isSettingAnchor = false;
-            anchorBtn.textContent = 'Set Anchor Point';
+            anchorBtn.textContent = 'Set Anchor';
             anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
             anchorBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
             
             isBgMode = false;
-            bgModeBtn.textContent = 'Control Background';
+            bgModeBtn.textContent = 'Control BG';
             bgModeBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
             bgModeBtn.classList.add('bg-purple-600', 'hover:bg-purple-700');
             canvas.style.pointerEvents = 'auto';
@@ -197,7 +212,7 @@
         // --- Drawing Functions ---
         function drawPaddle() {
             ctx.save();
-            ctx.lineWidth = 8;
+            ctx.lineWidth = Math.max(4, canvas.width * 0.01); // Responsive line width
             ctx.lineCap = 'round';
 
             const bladeStartRatio = 0.6;
@@ -223,7 +238,7 @@
             // Perpendicular Handle
             const shaftAngle = Math.atan2(paddle.tip.y - paddle.handle.y, paddle.tip.x - paddle.handle.x);
             const handleAngle = shaftAngle + Math.PI / 2;
-            const handleHalfWidth = 20;
+            const handleHalfWidth = paddle.length * 0.08;
             const h1 = {
                 x: paddle.handle.x + Math.cos(handleAngle) * handleHalfWidth,
                 y: paddle.handle.y + Math.sin(handleAngle) * handleHalfWidth
@@ -233,7 +248,7 @@
                 y: paddle.handle.y - Math.sin(handleAngle) * handleHalfWidth
             };
             ctx.strokeStyle = '#E2E8F0';
-            ctx.lineWidth = 12;
+            ctx.lineWidth = Math.max(5, canvas.width * 0.015);
             ctx.beginPath();
             ctx.moveTo(h1.x, h1.y);
             ctx.lineTo(h2.x, h2.y);
@@ -244,7 +259,7 @@
                 const anchorY = paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio;
                 ctx.fillStyle = '#6EE7B7';
                 ctx.beginPath();
-                ctx.arc(anchorX, anchorY, 8, 0, Math.PI * 2);
+                ctx.arc(anchorX, anchorY, Math.max(4, canvas.width * 0.01), 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.restore();
@@ -269,7 +284,6 @@
             const maxBladeDepth = paddle.length * 0.4;
             const maxDepthY = bladeStartPoint.y + maxBladeDepth;
             
-            // UPDATE: Only draw yellow line if it's below the water level
             if (maxDepthY > waterLevel) {
                 ctx.save();
                 ctx.beginPath();
@@ -356,7 +370,7 @@
                 paddle.anchorRatio = totalLength > 0 ? distFromHandle / totalLength : 0;
                 
                 isSettingAnchor = false;
-                anchorBtn.textContent = 'Set Anchor Point';
+                anchorBtn.textContent = 'Set Anchor';
                 anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
                 anchorBtn.classList.add('bg-cyan-600', 'hover:bg-cyan-700');
                 draw();
@@ -581,7 +595,7 @@
 
         anchorBtn.addEventListener('click', () => {
             isSettingAnchor = !isSettingAnchor;
-            anchorBtn.textContent = isSettingAnchor ? 'Cancel Setting Anchor' : 'Set Anchor Point';
+            anchorBtn.textContent = isSettingAnchor ? 'Cancel Anchor' : 'Set Anchor';
             anchorBtn.classList.toggle('bg-yellow-500', isSettingAnchor);
             anchorBtn.classList.toggle('hover:bg-yellow-600', isSettingAnchor);
             anchorBtn.classList.toggle('bg-cyan-600', !isSettingAnchor);
@@ -590,7 +604,7 @@
         
         bgModeBtn.addEventListener('click', () => {
             isBgMode = !isBgMode;
-            bgModeBtn.textContent = isBgMode ? 'Control Paddle' : 'Control Background';
+            bgModeBtn.textContent = isBgMode ? 'Control Paddle' : 'Control BG';
             bgModeBtn.classList.toggle('bg-green-500', isBgMode);
             bgModeBtn.classList.toggle('hover:bg-green-600', isBgMode);
             bgModeBtn.classList.toggle('bg-purple-600', !isBgMode);
