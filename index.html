@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dragon Boat Paddle Simulation</title>
+    <title>Paddle Water Catching Visualiser</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -49,8 +49,10 @@
 </head>
 <body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen m-0 p-4">
 
+    <h1 class="text-3xl font-bold text-white mb-4">Paddle Water Catching Visualiser</h1>
+
     <div class="w-full max-w-5xl flex-grow flex flex-col items-center">
-        <div class="relative w-full max-w-4xl aspect-video bg-gray-800 rounded-xl shadow-2xl overflow-hidden border-2 border-gray-700 mt-4">
+        <div class="relative w-full max-w-4xl aspect-video bg-gray-800 rounded-xl shadow-2xl overflow-hidden border-2 border-gray-700">
             <div id="bgContainer">
                 <img id="bgImage" src="" alt="User uploaded background">
             </div>
@@ -122,7 +124,7 @@
         let isSettingAnchor = false;
         let isBgMode = false;
         let paddle = {};
-        const waterLevel = 300;
+        let waterLevel; 
         let instructionTimeout;
 
         // Interaction states
@@ -131,6 +133,7 @@
         let isBgDragging = false;
         let dragStart = { x: 0, y: 0 };
         let initialPaddlePos = {};
+        let currentPivot = null; 
         let initialDistances = { tip: 0, handle: 0 };
         
         // Background image state
@@ -143,19 +146,24 @@
             const container = canvas.parentElement;
             canvas.width = container.clientWidth;
             canvas.height = container.clientHeight;
+            waterLevel = canvas.height * (2 / 3);
             if (bgImage.src) {
                 updateImageTransform();
             }
-            draw();
+            if (!paddle.handle) {
+                init();
+            } else {
+                draw();
+            }
         }
 
         function init() {
+            waterLevel = canvas.height * (2 / 3);
             paddle = {
-                handle: { x: canvas.width / 2, y: 50 },
-                tip: { x: canvas.width / 2, y: 300 },
+                handle: { x: canvas.width / 2, y: canvas.height / 2 - 125 },
+                tip: { x: canvas.width / 2, y: canvas.height / 2 + 125 },
                 length: 250,
-                angle: Math.PI / 2,
-                anchor: null
+                anchorRatio: null
             };
             isSettingAnchor = false;
             anchorBtn.textContent = 'Set Anchor Point';
@@ -171,7 +179,7 @@
 
 
             // Reset background
-            bgUpload.value = null; // BUG FIX: Clear the file input
+            bgUpload.value = null; 
             bgImage.src = '';
             bgControls.classList.add('hidden');
             bgScale.value = 1;
@@ -192,38 +200,49 @@
             ctx.lineWidth = 8;
             ctx.lineCap = 'round';
 
-            const bladeStartRatio = 0.6; // Top 60% is shaft
+            const bladeStartRatio = 0.6;
             const bladeStartPoint = {
                 x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
                 y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
             };
 
-            // Shaft (top 60%)
-            ctx.strokeStyle = '#E2E8F0'; // Light gray
+            // Shaft
+            ctx.strokeStyle = '#E2E8F0';
             ctx.beginPath();
             ctx.moveTo(paddle.handle.x, paddle.handle.y);
             ctx.lineTo(bladeStartPoint.x, bladeStartPoint.y);
             ctx.stroke();
 
-            // Blade (bottom 40%)
-            ctx.strokeStyle = '#3b82f6'; // Dark Blue
+            // Blade
+            ctx.strokeStyle = '#3b82f6';
             ctx.beginPath();
             ctx.moveTo(bladeStartPoint.x, bladeStartPoint.y);
             ctx.lineTo(paddle.tip.x, paddle.tip.y);
             ctx.stroke();
 
-            // Handle
+            // Perpendicular Handle
+            const shaftAngle = Math.atan2(paddle.tip.y - paddle.handle.y, paddle.tip.x - paddle.handle.x);
+            const handleAngle = shaftAngle + Math.PI / 2;
+            const handleHalfWidth = 20;
+            const h1 = {
+                x: paddle.handle.x + Math.cos(handleAngle) * handleHalfWidth,
+                y: paddle.handle.y + Math.sin(handleAngle) * handleHalfWidth
+            };
+            const h2 = {
+                x: paddle.handle.x - Math.cos(handleAngle) * handleHalfWidth,
+                y: paddle.handle.y - Math.sin(handleAngle) * handleHalfWidth
+            };
             ctx.strokeStyle = '#E2E8F0';
-            ctx.beginPath();
-            ctx.moveTo(paddle.handle.x - 20, paddle.handle.y);
-            ctx.lineTo(paddle.handle.x + 20, paddle.handle.y);
             ctx.lineWidth = 12;
+            ctx.beginPath();
+            ctx.moveTo(h1.x, h1.y);
+            ctx.lineTo(h2.x, h2.y);
             ctx.stroke();
 
-            if (paddle.anchor) {
-                const anchorX = paddle.handle.x + paddle.anchor.x;
-                const anchorY = paddle.handle.y + paddle.anchor.y;
-                ctx.fillStyle = '#38BDF8';
+            if (paddle.anchorRatio !== null) {
+                const anchorX = paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio;
+                const anchorY = paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio;
+                ctx.fillStyle = '#6EE7B7';
                 ctx.beginPath();
                 ctx.arc(anchorX, anchorY, 8, 0, Math.PI * 2);
                 ctx.fill();
@@ -240,12 +259,28 @@
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Calculate blade start point
             const bladeStartRatio = 0.6;
             const bladeStartPoint = {
                 x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
                 y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
             };
+
+            // Dynamic Max Depth Indicator
+            const maxBladeDepth = paddle.length * 0.4;
+            const maxDepthY = bladeStartPoint.y + maxBladeDepth;
+            
+            // UPDATE: Only draw yellow line if it's below the water level
+            if (maxDepthY > waterLevel) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(250, 204, 21, 0.7)'; // Yellow
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.moveTo(0, maxDepthY);
+                ctx.lineTo(canvas.width, maxDepthY);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             if (paddle.tip.y <= waterLevel || bladeStartPoint.y > paddle.tip.y) return;
 
@@ -284,7 +319,6 @@
         }
 
         function draw() {
-            // BUG FIX: Prevent drawing before paddle is initialized
             if (!paddle || !paddle.handle) return;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawWater();
@@ -317,7 +351,10 @@
 
             if (isSettingAnchor) {
                 const closestPoint = closestPointOnLine(paddle.handle, paddle.tip, pos);
-                paddle.anchor = { x: closestPoint.x - paddle.handle.x, y: closestPoint.y - paddle.handle.y };
+                const distFromHandle = distance(paddle.handle, closestPoint);
+                const totalLength = distance(paddle.handle, paddle.tip);
+                paddle.anchorRatio = totalLength > 0 ? distFromHandle / totalLength : 0;
+                
                 isSettingAnchor = false;
                 anchorBtn.textContent = 'Set Anchor Point';
                 anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
@@ -328,8 +365,19 @@
 
             if (e.button === 0) { // Left-click for rotation
                 isRotating = true;
-                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
-                initialDistances = { tip: distance(pivot, paddle.tip), handle: distance(pivot, paddle.handle) };
+                if (paddle.anchorRatio !== null) {
+                    currentPivot = {
+                        x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio,
+                        y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio
+                    };
+                } else {
+                    currentPivot = { ...paddle.handle };
+                }
+                
+                initialDistances = { 
+                    tip: distance(currentPivot, paddle.tip), 
+                    handle: distance(currentPivot, paddle.handle) 
+                };
             } else if (e.button === 2) { // Right-click for dragging
                 isRightDragging = true;
                 dragStart = pos;
@@ -349,30 +397,32 @@
                 return;
             }
 
-            if (!isRotating && !isRightDragging) return;
-
             if (isRightDragging) {
                 paddle.handle.x = initialPaddlePos.handle.x + dx;
                 paddle.handle.y = initialPaddlePos.handle.y + dy;
                 paddle.tip.x = initialPaddlePos.tip.x + dx;
                 paddle.tip.y = initialPaddlePos.tip.y + dy;
+                draw();
             }
 
             if (isRotating) {
-                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
-                const angle = Math.atan2(pos.y - pivot.y, pos.x - pivot.x);
-                paddle.tip.x = pivot.x + Math.cos(angle) * initialDistances.tip;
-                paddle.tip.y = pivot.y + Math.sin(angle) * initialDistances.tip;
-                paddle.handle.x = pivot.x - Math.cos(angle) * initialDistances.handle;
-                paddle.handle.y = pivot.y - Math.sin(angle) * initialDistances.handle;
+                if (!currentPivot) return;
+                const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
+                
+                paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
+                paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
+
+                paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
+                paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
+                draw();
             }
-            draw();
         }
 
         function handleMouseUp() {
             isRotating = false;
             isRightDragging = false;
             isBgDragging = false;
+            currentPivot = null; 
         }
 
         // --- Touch Handlers ---
@@ -390,8 +440,15 @@
 
             if (touches.length === 1) { // Single finger for rotation
                 isRotating = true;
-                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
-                initialDistances = { tip: distance(pivot, paddle.tip), handle: distance(pivot, paddle.handle) };
+                if (paddle.anchorRatio !== null) {
+                    currentPivot = {
+                        x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio,
+                        y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio
+                    };
+                } else {
+                    currentPivot = { ...paddle.handle };
+                }
+                initialDistances = { tip: distance(currentPivot, paddle.tip), handle: distance(currentPivot, paddle.handle) };
             } else if (touches.length === 2) { // Two fingers for dragging
                 isRightDragging = true;
                 dragStart = getMidpoint(touches[0], touches[1]);
@@ -412,15 +469,15 @@
                 return;
             }
 
-
             if (isRotating && touches.length === 1) {
+                if (!currentPivot) return;
                 const pos = getTouchPos(touches[0]);
-                const pivot = paddle.anchor ? { x: paddle.handle.x + paddle.anchor.x, y: paddle.handle.y + paddle.anchor.y } : paddle.handle;
-                const angle = Math.atan2(pos.y - pivot.y, pos.x - pivot.x);
-                paddle.tip.x = pivot.x + Math.cos(angle) * initialDistances.tip;
-                paddle.tip.y = pivot.y + Math.sin(angle) * initialDistances.tip;
-                paddle.handle.x = pivot.x - Math.cos(angle) * initialDistances.handle;
-                paddle.handle.y = pivot.y - Math.sin(angle) * initialDistances.handle;
+                const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
+                paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
+                paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
+                paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
+                paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
+                draw();
             } else if (isRightDragging && touches.length === 2) {
                 const pos = getMidpoint(touches[0], touches[1]);
                 const dx = pos.x - dragStart.x;
@@ -429,14 +486,15 @@
                 paddle.handle.y = initialPaddlePos.handle.y + dy;
                 paddle.tip.x = initialPaddlePos.tip.x + dx;
                 paddle.tip.y = initialPaddlePos.tip.y + dy;
+                draw();
             }
-            draw();
         }
 
         function handleTouchEnd() {
             isRotating = false;
             isRightDragging = false;
             isBgDragging = false;
+            currentPivot = null; 
         }
 
         // --- Background Image Handlers ---
@@ -551,8 +609,8 @@
 
         // --- Start ---
         window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-        init();
+        window.addEventListener('load', resizeCanvas);
+
     </script>
 </body>
 </html>
