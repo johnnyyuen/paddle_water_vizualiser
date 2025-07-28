@@ -82,8 +82,8 @@
             <button id="hideInstructionsBtn" class="text-xs text-gray-400 hover:text-white">Hide</button>
         </div>
         <ul class="list-disc list-inside space-y-1">
-            <li><strong class="text-cyan-400">Move:</strong> Right-click/2-finger drag.</li>
-            <li><strong class="text-cyan-400">Rotate:</strong> Left-click/1-finger drag.</li>
+            <li><strong class="text-cyan-400">Move:</strong> Left-click/1-finger drag.</li>
+            <li><strong class="text-cyan-400">Rotate:</strong> Right-click/2-finger drag.</li>
             <li><strong class="text-cyan-400">Set Anchor:</strong> Use button, then click paddle.</li>
             <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag.</li>
         </ul>
@@ -125,11 +125,10 @@
         let isBgMode = false;
         let paddle = {};
         let waterLevel; 
-        let instructionTimeout;
 
         // Interaction states
         let isRotating = false;
-        let isRightDragging = false;
+        let isMoving = false;
         let isBgDragging = false;
         let dragStart = { x: 0, y: 0 };
         let initialPaddlePos = {};
@@ -144,11 +143,16 @@
         // --- Initialization and Resizing ---
         function resizeCanvas() {
             const container = canvas.parentElement;
-            const oldHeight = canvas.height || container.clientHeight;
+            const oldWidth = canvas.width;
+            const oldHeight = canvas.height;
             
+            if (!container.clientWidth || !container.clientHeight) return;
+            if (oldWidth === container.clientWidth && oldHeight === container.clientHeight) return;
+
             canvas.width = container.clientWidth;
             canvas.height = container.clientHeight;
             
+            const scaleX = canvas.width / oldWidth;
             const scaleY = canvas.height / oldHeight;
 
             waterLevel = canvas.height * (2 / 3);
@@ -156,15 +160,26 @@
                 updateImageTransform();
             }
 
-            if (!paddle.handle) {
+            if (!paddle.handle || !oldWidth || !oldHeight) {
                 init();
             } else {
-                // Scale existing paddle to new screen size
-                paddle.handle.x *= scaleY;
-                paddle.handle.y *= scaleY;
-                paddle.tip.x *= scaleY;
-                paddle.tip.y *= scaleY;
-                paddle.length *= scaleY;
+                // BUG FIX: Intelligently rescale paddle to prevent distortion
+                const centerX = (paddle.handle.x + paddle.tip.x) / 2;
+                const centerY = (paddle.handle.y + paddle.tip.y) / 2;
+                const angle = Math.atan2(paddle.tip.y - paddle.handle.y, paddle.tip.x - paddle.handle.x);
+
+                const newCenterX = centerX * scaleX;
+                const newCenterY = centerY * scaleY;
+                const newLength = canvas.height * 0.6; // Keep length proportional to height
+
+                paddle.length = newLength;
+                const halfLength = newLength / 2;
+
+                paddle.handle.x = newCenterX - Math.cos(angle) * halfLength;
+                paddle.handle.y = newCenterY - Math.sin(angle) * halfLength;
+                paddle.tip.x = newCenterX + Math.cos(angle) * halfLength;
+                paddle.tip.y = newCenterY + Math.sin(angle) * halfLength;
+                
                 draw();
             }
         }
@@ -202,9 +217,7 @@
             updateImageTransform();
 
             // Instructions Panel Logic
-            showInstructions();
-            clearTimeout(instructionTimeout);
-            instructionTimeout = setTimeout(hideInstructions, 60000);
+            hideInstructions(); // Start with instructions hidden
 
             draw();
         }
@@ -343,7 +356,6 @@
         function hideInstructions() {
             infoPanel.classList.add('panel-hidden-left');
             showInstructionsBtn.classList.remove('hidden');
-            clearTimeout(instructionTimeout);
         }
 
         function showInstructions() {
@@ -377,7 +389,11 @@
                 return;
             }
 
-            if (e.button === 0) { // Left-click for rotation
+            if (e.button === 0) { // Left-click for MOVING
+                isMoving = true;
+                dragStart = pos;
+                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
+            } else if (e.button === 2) { // Right-click for ROTATING
                 isRotating = true;
                 if (paddle.anchorRatio !== null) {
                     currentPivot = {
@@ -392,10 +408,6 @@
                     tip: distance(currentPivot, paddle.tip), 
                     handle: distance(currentPivot, paddle.handle) 
                 };
-            } else if (e.button === 2) { // Right-click for dragging
-                isRightDragging = true;
-                dragStart = pos;
-                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
             }
         }
 
@@ -411,7 +423,7 @@
                 return;
             }
 
-            if (isRightDragging) {
+            if (isMoving) {
                 paddle.handle.x = initialPaddlePos.handle.x + dx;
                 paddle.handle.y = initialPaddlePos.handle.y + dy;
                 paddle.tip.x = initialPaddlePos.tip.x + dx;
@@ -434,7 +446,7 @@
 
         function handleMouseUp() {
             isRotating = false;
-            isRightDragging = false;
+            isMoving = false;
             isBgDragging = false;
             currentPivot = null; 
         }
@@ -452,7 +464,11 @@
                 return;
             }
 
-            if (touches.length === 1) { // Single finger for rotation
+            if (touches.length === 1) { // Single finger for MOVING
+                isMoving = true;
+                dragStart = getTouchPos(touches[0]);
+                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
+            } else if (touches.length === 2) { // Two fingers for ROTATING
                 isRotating = true;
                 if (paddle.anchorRatio !== null) {
                     currentPivot = {
@@ -463,10 +479,6 @@
                     currentPivot = { ...paddle.handle };
                 }
                 initialDistances = { tip: distance(currentPivot, paddle.tip), handle: distance(currentPivot, paddle.handle) };
-            } else if (touches.length === 2) { // Two fingers for dragging
-                isRightDragging = true;
-                dragStart = getMidpoint(touches[0], touches[1]);
-                initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
             }
         }
 
@@ -483,17 +495,8 @@
                 return;
             }
 
-            if (isRotating && touches.length === 1) {
-                if (!currentPivot) return;
+            if (isMoving && touches.length === 1) {
                 const pos = getTouchPos(touches[0]);
-                const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
-                paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
-                paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
-                paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
-                paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
-                draw();
-            } else if (isRightDragging && touches.length === 2) {
-                const pos = getMidpoint(touches[0], touches[1]);
                 const dx = pos.x - dragStart.x;
                 const dy = pos.y - dragStart.y;
                 paddle.handle.x = initialPaddlePos.handle.x + dx;
@@ -501,12 +504,23 @@
                 paddle.tip.x = initialPaddlePos.tip.x + dx;
                 paddle.tip.y = initialPaddlePos.tip.y + dy;
                 draw();
+            } else if (isRotating && touches.length === 2) {
+                if (!currentPivot) return;
+                const pos = getMidpoint(touches[0], touches[1]);
+                const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
+                
+                paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
+                paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
+
+                paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
+                paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
+                draw();
             }
         }
 
         function handleTouchEnd() {
             isRotating = false;
-            isRightDragging = false;
+            isMoving = false;
             isBgDragging = false;
             currentPivot = null; 
         }
