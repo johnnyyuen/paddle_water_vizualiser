@@ -67,6 +67,14 @@
             <!-- Canvases for different layers -->
             <canvas id="traceCanvas"></canvas>
             <canvas id="paddleCanvas"></canvas>
+            
+            <!-- Stroke Length Display (Positioned relative to this container) -->
+            <div id="lengthDisplay" class="display-panel absolute top-4 right-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 z-10 panel-hidden-right">
+                <h2 class="text-base sm:text-lg font-bold text-white text-center mb-2">Last 5 Stroke Lengths (px)</h2>
+                <ul id="lengthList" class="list-none text-center">
+                    <li>-</li>
+                </ul>
+            </div>
         </div>
     
         <div class="mt-4 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
@@ -99,13 +107,6 @@
             <li><strong class="text-cyan-400">Rotate:</strong> Right-click/2-finger drag.</li>
             <li><strong class="text-cyan-400">Set Anchor:</strong> Use button, then click paddle.</li>
             <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag.</li>
-        </ul>
-    </div>
-
-     <div id="lengthDisplay" class="display-panel absolute top-4 right-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 z-10">
-        <h2 class="text-base sm:text-lg font-bold text-white text-center mb-2">Last 5 Stroke Lengths (px)</h2>
-        <ul id="lengthList" class="list-none text-center">
-            <li>-</li>
         </ul>
     </div>
 
@@ -142,6 +143,7 @@
         const infoPanel = document.getElementById('infoPanel');
         const hideInstructionsBtn = document.getElementById('hideInstructionsBtn');
         const showInstructionsBtn = document.getElementById('showInstructionsBtn');
+        const lengthDisplay = document.getElementById('lengthDisplay');
         const lengthList = document.getElementById('lengthList');
 
         // --- State ---
@@ -244,6 +246,7 @@
             resetTrace();
             lengthHistory = [];
             updateLengthDisplay();
+            lengthDisplay.classList.add('panel-hidden-right'); // Hide display on init
 
             // Reset background
             bgUpload.value = null; 
@@ -587,6 +590,7 @@
             traceBtn.classList.toggle('hover:bg-pink-600', isTracing); 
             traceBtn.classList.toggle('bg-green-600', !isTracing); 
             traceBtn.classList.toggle('hover:bg-green-700', !isTracing); 
+            lengthDisplay.classList.toggle('panel-hidden-right', !isTracing);
             if (isTracing) {
                 traceInterval = setInterval(recordLineTrace, 100);
             } else {
