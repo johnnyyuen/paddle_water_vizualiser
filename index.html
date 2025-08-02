@@ -14,10 +14,18 @@
         canvas {
             cursor: crosshair;
             touch-action: none; /* Prevents default touch actions like scrolling */
-            position: relative; /* Ensure canvas is in the stacking context */
+            position: absolute; /* Position canvases on top of each other */
+            top: 0;
+            left: 0;
             z-index: 5; /* Canvas on top of the image */
         }
-        .info-panel, .controls-panel {
+        #traceCanvas {
+            z-index: 6; /* Trace canvas below the main one */
+        }
+        #paddleCanvas {
+            z-index: 7; /* Main canvas on top */
+        }
+        .info-panel, .controls-panel, .display-panel {
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
             transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
@@ -56,10 +64,15 @@
             <div id="bgContainer">
                 <img id="bgImage" src="" alt="User uploaded background">
             </div>
+            <!-- Canvases for different layers -->
+            <canvas id="traceCanvas"></canvas>
             <canvas id="paddleCanvas"></canvas>
         </div>
     
         <div class="mt-4 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
+            <button id="traceBtn" class="px-4 py-2 text-sm sm:px-6 sm:text-base bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75">
+                Trace Water
+            </button>
             <button id="anchorBtn" class="px-4 py-2 text-sm sm:px-6 sm:text-base bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-opacity-75">
                 Set Anchor
             </button>
@@ -76,7 +89,7 @@
     </div>
 
 
-    <div id="infoPanel" class="info-panel absolute top-4 left-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 max-w-[180px] sm:max-w-xs z-10">
+    <div id="infoPanel" class="info-panel absolute top-24 left-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 max-w-[180px] sm:max-w-xs z-10">
         <div class="flex justify-between items-center mb-2">
             <h2 class="text-base sm:text-lg font-bold text-white">Instructions</h2>
             <button id="hideInstructionsBtn" class="text-xs text-gray-400 hover:text-white">Hide</button>
@@ -86,6 +99,13 @@
             <li><strong class="text-cyan-400">Rotate:</strong> Right-click/2-finger drag.</li>
             <li><strong class="text-cyan-400">Set Anchor:</strong> Use button, then click paddle.</li>
             <li><strong class="text-purple-400">Control BG:</strong> Toggle mode, then drag.</li>
+        </ul>
+    </div>
+
+     <div id="lengthDisplay" class="display-panel absolute top-4 right-4 bg-black bg-opacity-50 p-3 rounded-lg text-xs sm:text-sm text-gray-300 z-10">
+        <h2 class="text-base sm:text-lg font-bold text-white text-center mb-2">Last 5 Stroke Lengths (px)</h2>
+        <ul id="lengthList" class="list-none text-center">
+            <li>-</li>
         </ul>
     </div>
 
@@ -104,8 +124,11 @@
 
     <script>
         // --- DOM Elements ---
-        const canvas = document.getElementById('paddleCanvas');
-        const ctx = canvas.getContext('2d');
+        const paddleCanvas = document.getElementById('paddleCanvas');
+        const ctx = paddleCanvas.getContext('2d');
+        const traceCanvas = document.getElementById('traceCanvas');
+        const traceCtx = traceCanvas.getContext('2d');
+        const traceBtn = document.getElementById('traceBtn');
         const anchorBtn = document.getElementById('anchorBtn');
         const bgModeBtn = document.getElementById('bgModeBtn');
         const resetBtn = document.getElementById('resetBtn');
@@ -119,12 +142,20 @@
         const infoPanel = document.getElementById('infoPanel');
         const hideInstructionsBtn = document.getElementById('hideInstructionsBtn');
         const showInstructionsBtn = document.getElementById('showInstructionsBtn');
+        const lengthList = document.getElementById('lengthList');
 
         // --- State ---
         let isSettingAnchor = false;
         let isBgMode = false;
         let paddle = {};
         let waterLevel; 
+
+        // New Tracing State
+        let isTracing = false;
+        let lineTracePath = [];
+        let lengthHistory = [];
+        let wasInWater = false;
+        let traceInterval = null;
 
         // Interaction states
         let isRotating = false;
@@ -142,20 +173,20 @@
 
         // --- Initialization and Resizing ---
         function resizeCanvas() {
-            const container = canvas.parentElement;
-            const oldWidth = canvas.width;
-            const oldHeight = canvas.height;
+            const container = paddleCanvas.parentElement;
+            const oldWidth = paddleCanvas.width;
+            const oldHeight = paddleCanvas.height;
             
             if (!container.clientWidth || !container.clientHeight) return;
             if (oldWidth === container.clientWidth && oldHeight === container.clientHeight) return;
 
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
+            paddleCanvas.width = traceCanvas.width = container.clientWidth;
+            paddleCanvas.height = traceCanvas.height = container.clientHeight;
             
-            const scaleX = canvas.width / oldWidth;
-            const scaleY = canvas.height / oldHeight;
+            const scaleX = paddleCanvas.width / oldWidth;
+            const scaleY = paddleCanvas.height / oldHeight;
 
-            waterLevel = canvas.height * (2 / 3);
+            waterLevel = paddleCanvas.height * (2 / 3);
             if (bgImage.src) {
                 updateImageTransform();
             }
@@ -163,14 +194,13 @@
             if (!paddle.handle || !oldWidth || !oldHeight) {
                 init();
             } else {
-                // BUG FIX: Intelligently rescale paddle to prevent distortion
                 const centerX = (paddle.handle.x + paddle.tip.x) / 2;
                 const centerY = (paddle.handle.y + paddle.tip.y) / 2;
                 const angle = Math.atan2(paddle.tip.y - paddle.handle.y, paddle.tip.x - paddle.handle.x);
 
                 const newCenterX = centerX * scaleX;
                 const newCenterY = centerY * scaleY;
-                const newLength = canvas.height * 0.6; // Keep length proportional to height
+                const newLength = paddleCanvas.height * 0.6;
 
                 paddle.length = newLength;
                 const halfLength = newLength / 2;
@@ -185,13 +215,13 @@
         }
 
         function init() {
-            waterLevel = canvas.height * (2 / 3);
-            const paddleLength = canvas.height * 0.6; // Responsive paddle length
-            const initialY = canvas.height / 3;
+            waterLevel = paddleCanvas.height * (2 / 3);
+            const paddleLength = paddleCanvas.height * 0.6;
+            const initialY = paddleCanvas.height / 3;
 
             paddle = {
-                handle: { x: canvas.width / 2, y: initialY - paddleLength / 2 },
-                tip: { x: canvas.width / 2, y: initialY + paddleLength / 2 },
+                handle: { x: paddleCanvas.width / 2, y: initialY - paddleLength / 2 },
+                tip: { x: paddleCanvas.width / 2, y: initialY + paddleLength / 2 },
                 length: paddleLength,
                 anchorRatio: null
             };
@@ -204,9 +234,16 @@
             bgModeBtn.textContent = 'Control BG';
             bgModeBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
             bgModeBtn.classList.add('bg-purple-600', 'hover:bg-purple-700');
-            canvas.style.pointerEvents = 'auto';
+            paddleCanvas.style.pointerEvents = 'auto';
             controlsPanel.classList.add('panel-hidden-right');
 
+            // Reset tracing
+            isTracing = false;
+            traceBtn.classList.remove('bg-pink-500', 'hover:bg-pink-600');
+            traceBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+            resetTrace();
+            lengthHistory = [];
+            updateLengthDisplay();
 
             // Reset background
             bgUpload.value = null; 
@@ -217,7 +254,7 @@
             updateImageTransform();
 
             // Instructions Panel Logic
-            hideInstructions(); // Start with instructions hidden
+            hideInstructions();
 
             draw();
         }
@@ -225,10 +262,10 @@
         // --- Drawing Functions ---
         function drawPaddle() {
             ctx.save();
-            ctx.lineWidth = Math.max(4, canvas.width * 0.01); // Responsive line width
+            ctx.lineWidth = Math.max(4, paddleCanvas.width * 0.01);
             ctx.lineCap = 'round';
 
-            const bladeStartRatio = 0.6;
+            const bladeStartRatio = 1 - 0.44;
             const bladeStartPoint = {
                 x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
                 y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
@@ -261,7 +298,7 @@
                 y: paddle.handle.y - Math.sin(handleAngle) * handleHalfWidth
             };
             ctx.strokeStyle = '#E2E8F0';
-            ctx.lineWidth = Math.max(5, canvas.width * 0.015);
+            ctx.lineWidth = Math.max(5, paddleCanvas.width * 0.015);
             ctx.beginPath();
             ctx.moveTo(h1.x, h1.y);
             ctx.lineTo(h2.x, h2.y);
@@ -272,29 +309,29 @@
                 const anchorY = paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio;
                 ctx.fillStyle = '#6EE7B7';
                 ctx.beginPath();
-                ctx.arc(anchorX, anchorY, Math.max(4, canvas.width * 0.01), 0, Math.PI * 2);
+                ctx.arc(anchorX, anchorY, Math.max(4, paddleCanvas.width * 0.01), 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.restore();
         }
 
         function drawWater() {
+            let isInWater = false;
             // Draw the main water surface line
             ctx.beginPath();
             ctx.moveTo(0, waterLevel);
-            ctx.lineTo(canvas.width, waterLevel);
+            ctx.lineTo(paddleCanvas.width, waterLevel);
             ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            const bladeStartRatio = 0.6;
+            const bladeStartRatio = 1 - 0.44;
             const bladeStartPoint = {
                 x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio,
                 y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio
             };
 
-            // Dynamic Max Depth Indicator
-            const maxBladeDepth = paddle.length * 0.4;
+            const maxBladeDepth = paddle.length * 0.44;
             const maxDepthY = bladeStartPoint.y + maxBladeDepth;
             
             if (maxDepthY > waterLevel) {
@@ -304,83 +341,126 @@
                 ctx.lineWidth = 2;
                 ctx.setLineDash([5, 5]);
                 ctx.moveTo(0, maxDepthY);
-                ctx.lineTo(canvas.width, maxDepthY);
+                ctx.lineTo(paddleCanvas.width, maxDepthY);
                 ctx.stroke();
                 ctx.restore();
             }
 
-            if (paddle.tip.y <= waterLevel || bladeStartPoint.y > paddle.tip.y) return;
+            if (paddle.tip.y > waterLevel && bladeStartPoint.y < paddle.tip.y) {
+                const entryPoint = lineIntersection(paddle.handle, paddle.tip, {x:0, y:waterLevel}, {x:paddleCanvas.width, y:waterLevel});
+                if (entryPoint) {
+                    isInWater = true;
+                    let submergedBladeTopPoint = (entryPoint.y < bladeStartPoint.y) ? bladeStartPoint : entryPoint;
 
-            const entryPoint = lineIntersection(paddle.handle, paddle.tip, {x:0, y:waterLevel}, {x:canvas.width, y:waterLevel});
-            if (!entryPoint) return;
+                    const rectTop = submergedBladeTopPoint.y;
+                    const rectBottom = paddle.tip.y;
 
-            let submergedBladeTopPoint = (entryPoint.y < bladeStartPoint.y) ? bladeStartPoint : entryPoint;
+                    if (rectBottom > rectTop) {
+                        const intersection = submergedBladeTopPoint;
+                        const leftPolygon = [ { x: 0, y: rectTop }, intersection, paddle.tip, { x: paddle.tip.x, y: rectBottom }, { x: 0, y: rectBottom }];
+                        const rightPolygon = [ { x: paddleCanvas.width, y: rectTop }, intersection, paddle.tip, { x: paddle.tip.x, y: rectBottom }, { x: paddleCanvas.width, y: rectBottom }];
 
-            const rectTop = submergedBladeTopPoint.y;
-            const rectBottom = paddle.tip.y;
+                        ctx.fillStyle = 'rgba(168, 85, 247, 0.7)';
+                        ctx.beginPath();
+                        leftPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+                        ctx.closePath();
+                        ctx.fill();
 
-            if (rectBottom <= rectTop) return;
-
-            const intersection = submergedBladeTopPoint;
-
-            const leftPolygon = [
-                { x: 0, y: rectTop }, intersection, paddle.tip,
-                { x: paddle.tip.x, y: rectBottom }, { x: 0, y: rectBottom }
-            ];
-            const rightPolygon = [
-                { x: canvas.width, y: rectTop }, intersection, paddle.tip,
-                { x: paddle.tip.x, y: rectBottom }, { x: canvas.width, y: rectBottom }
-            ];
-
-            ctx.fillStyle = 'rgba(168, 85, 247, 0.7)';
-            ctx.beginPath();
-            leftPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
-            ctx.beginPath();
-            rightPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-            ctx.closePath();
-            ctx.fill();
+                        ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
+                        ctx.beginPath();
+                        rightPolygon.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                }
+            }
+            
+            if (wasInWater && !isInWater) {
+                completeTrace();
+            }
+            wasInWater = isInWater;
         }
 
         function draw() {
             if (!paddle || !paddle.handle) return;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, paddleCanvas.width, paddleCanvas.height);
             drawWater();
             drawPaddle();
         }
 
         // --- UI Panel Logic ---
-        function hideInstructions() {
-            infoPanel.classList.add('panel-hidden-left');
-            showInstructionsBtn.classList.remove('hidden');
+        function hideInstructions() { infoPanel.classList.add('panel-hidden-left'); showInstructionsBtn.classList.remove('hidden'); }
+        function showInstructions() { infoPanel.classList.remove('panel-hidden-left'); showInstructionsBtn.classList.add('hidden'); }
+
+        // --- Tracing Logic ---
+        function recordLineTrace() {
+            const bladeStartRatio = 1 - 0.44;
+            const bladeStartPoint = { x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * bladeStartRatio, y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * bladeStartRatio };
+            if (paddle.tip.y > waterLevel && bladeStartPoint.y < paddle.tip.y) {
+                const entryPoint = lineIntersection(paddle.handle, paddle.tip, {x:0, y:waterLevel}, {x:paddleCanvas.width, y:waterLevel});
+                if (entryPoint) {
+                    let submergedBladeTopPoint = (entryPoint.y < bladeStartPoint.y) ? bladeStartPoint : entryPoint;
+                    const line = {start: submergedBladeTopPoint, end: paddle.tip};
+                    lineTracePath.push(line);
+
+                    // Draw the new line segment onto the trace canvas
+                    traceCtx.save();
+                    traceCtx.strokeStyle = 'rgba(34, 197, 94, 1)';
+                    traceCtx.lineWidth = 2;
+                    traceCtx.beginPath();
+                    traceCtx.moveTo(line.start.x, line.start.y);
+                    traceCtx.lineTo(line.end.x, line.end.y);
+                    traceCtx.stroke();
+                    traceCtx.restore();
+                }
+            }
         }
 
-        function showInstructions() {
-            infoPanel.classList.remove('panel-hidden-left');
-            showInstructionsBtn.classList.add('hidden');
+        function resetTrace() {
+            lineTracePath = [];
+            wasInWater = false;
+            traceCtx.clearRect(0, 0, traceCanvas.width, traceCanvas.height);
+        }
+
+        function completeTrace() {
+            if (lineTracePath.length < 1) {
+                resetTrace();
+                return;
+            }
+            let totalLength = 0;
+            lineTracePath.forEach(line => {
+                totalLength += distance(line.start, line.end);
+            });
+            lengthHistory.unshift(Math.round(totalLength));
+            if (lengthHistory.length > 5) lengthHistory.pop();
+            
+            updateLengthDisplay();
+            resetTrace();
+        }
+
+        function updateLengthDisplay() {
+            lengthList.innerHTML = '';
+            if (lengthHistory.length === 0) {
+                lengthList.innerHTML = '<li>-</li>';
+                return;
+            }
+            lengthHistory.forEach(len => {
+                const li = document.createElement('li');
+                li.textContent = len.toLocaleString();
+                lengthList.appendChild(li);
+            });
         }
 
 
         // --- Event Handlers ---
         function handleMouseDown(e) {
             const pos = getMousePos(e);
-            
-            if (isBgMode) {
-                isBgDragging = true;
-                dragStart = pos;
-                initialBgPos = { x: bgImageState.x, y: bgImageState.y };
-                return;
-            }
-
+            if (isBgMode) { isBgDragging = true; dragStart = pos; initialBgPos = { x: bgImageState.x, y: bgImageState.y }; return; }
             if (isSettingAnchor) {
                 const closestPoint = closestPointOnLine(paddle.handle, paddle.tip, pos);
                 const distFromHandle = distance(paddle.handle, closestPoint);
                 const totalLength = distance(paddle.handle, paddle.tip);
                 paddle.anchorRatio = totalLength > 0 ? distFromHandle / totalLength : 0;
-                
                 isSettingAnchor = false;
                 anchorBtn.textContent = 'Set Anchor';
                 anchorBtn.classList.remove('bg-yellow-500', 'hover:bg-yellow-600');
@@ -389,25 +469,16 @@
                 return;
             }
 
-            if (e.button === 0) { // Left-click for MOVING
+            if (e.button === 0) { // Move
                 isMoving = true;
                 dragStart = pos;
                 initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
-            } else if (e.button === 2) { // Right-click for ROTATING
+            } else if (e.button === 2) { // Rotate
                 isRotating = true;
                 if (paddle.anchorRatio !== null) {
-                    currentPivot = {
-                        x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio,
-                        y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio
-                    };
-                } else {
-                    currentPivot = { ...paddle.handle };
-                }
-                
-                initialDistances = { 
-                    tip: distance(currentPivot, paddle.tip), 
-                    handle: distance(currentPivot, paddle.handle) 
-                };
+                    currentPivot = { x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio, y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio };
+                } else { currentPivot = { ...paddle.handle }; }
+                initialDistances = { tip: distance(currentPivot, paddle.tip), handle: distance(currentPivot, paddle.handle) };
             }
         }
 
@@ -416,68 +487,35 @@
             const dx = pos.x - dragStart.x;
             const dy = pos.y - dragStart.y;
 
-            if (isBgDragging) {
-                bgImageState.x = initialBgPos.x + dx;
-                bgImageState.y = initialBgPos.y + dy;
-                updateImageTransform();
-                return;
-            }
-
-            if (isMoving) {
-                paddle.handle.x = initialPaddlePos.handle.x + dx;
-                paddle.handle.y = initialPaddlePos.handle.y + dy;
-                paddle.tip.x = initialPaddlePos.tip.x + dx;
-                paddle.tip.y = initialPaddlePos.tip.y + dy;
-                draw();
-            }
-
+            if (isBgDragging) { bgImageState.x = initialBgPos.x + dx; bgImageState.y = initialBgPos.y + dy; updateImageTransform(); return; }
+            if (isMoving) { paddle.handle.x = initialPaddlePos.handle.x + dx; paddle.handle.y = initialPaddlePos.handle.y + dy; paddle.tip.x = initialPaddlePos.tip.x + dx; paddle.tip.y = initialPaddlePos.tip.y + dy; draw(); }
             if (isRotating) {
                 if (!currentPivot) return;
                 const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
-                
                 paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
                 paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
-
                 paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
                 paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
                 draw();
             }
         }
 
-        function handleMouseUp() {
-            isRotating = false;
-            isMoving = false;
-            isBgDragging = false;
-            currentPivot = null; 
-        }
+        function handleMouseUp() { isRotating = false; isMoving = false; isBgDragging = false; currentPivot = null; }
 
         // --- Touch Handlers ---
         function handleTouchStart(e) {
             e.preventDefault();
             const touches = e.touches;
-            if (isBgMode) {
-                if (touches.length === 1) {
-                    isBgDragging = true;
-                    dragStart = getTouchPos(touches[0]);
-                    initialBgPos = { x: bgImageState.x, y: bgImageState.y };
-                }
-                return;
-            }
-
-            if (touches.length === 1) { // Single finger for MOVING
+            if (isBgMode) { if (touches.length === 1) { isBgDragging = true; dragStart = getTouchPos(touches[0]); initialBgPos = { x: bgImageState.x, y: bgImageState.y }; } return; }
+            if (touches.length === 1) { // Move
                 isMoving = true;
                 dragStart = getTouchPos(touches[0]);
                 initialPaddlePos = { handle: { ...paddle.handle }, tip: { ...paddle.tip } };
-            } else if (touches.length === 2) { // Two fingers for ROTATING
+            } else if (touches.length === 2) { // Rotate
                 isRotating = true;
                 if (paddle.anchorRatio !== null) {
-                    currentPivot = {
-                        x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio,
-                        y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio
-                    };
-                } else {
-                    currentPivot = { ...paddle.handle };
-                }
+                    currentPivot = { x: paddle.handle.x + (paddle.tip.x - paddle.handle.x) * paddle.anchorRatio, y: paddle.handle.y + (paddle.tip.y - paddle.handle.y) * paddle.anchorRatio };
+                } else { currentPivot = { ...paddle.handle }; }
                 initialDistances = { tip: distance(currentPivot, paddle.tip), handle: distance(currentPivot, paddle.handle) };
             }
         }
@@ -485,45 +523,21 @@
         function handleTouchMove(e) {
             e.preventDefault();
             const touches = e.touches;
-            if (isBgDragging && touches.length === 1) {
-                const pos = getTouchPos(touches[0]);
-                const dx = pos.x - dragStart.x;
-                const dy = pos.y - dragStart.y;
-                bgImageState.x = initialBgPos.x + dx;
-                bgImageState.y = initialBgPos.y + dy;
-                updateImageTransform();
-                return;
-            }
-
-            if (isMoving && touches.length === 1) {
-                const pos = getTouchPos(touches[0]);
-                const dx = pos.x - dragStart.x;
-                const dy = pos.y - dragStart.y;
-                paddle.handle.x = initialPaddlePos.handle.x + dx;
-                paddle.handle.y = initialPaddlePos.handle.y + dy;
-                paddle.tip.x = initialPaddlePos.tip.x + dx;
-                paddle.tip.y = initialPaddlePos.tip.y + dy;
-                draw();
-            } else if (isRotating && touches.length === 2) {
+            if (isBgDragging && touches.length === 1) { const pos = getTouchPos(touches[0]); const dx = pos.x - dragStart.x; const dy = pos.y - dragStart.y; bgImageState.x = initialBgPos.x + dx; bgImageState.y = initialBgPos.y + dy; updateImageTransform(); return; }
+            if (isMoving && touches.length === 1) { const pos = getTouchPos(touches[0]); const dx = pos.x - dragStart.x; const dy = pos.y - dragStart.y; paddle.handle.x = initialPaddlePos.handle.x + dx; paddle.handle.y = initialPaddlePos.handle.y + dy; paddle.tip.x = initialPaddlePos.tip.x + dx; paddle.tip.y = initialPaddlePos.tip.y + dy; draw(); } 
+            else if (isRotating && touches.length === 2) {
                 if (!currentPivot) return;
                 const pos = getMidpoint(touches[0], touches[1]);
                 const angle = Math.atan2(pos.y - currentPivot.y, pos.x - currentPivot.x);
-                
                 paddle.tip.x = currentPivot.x + Math.cos(angle) * initialDistances.tip;
                 paddle.tip.y = currentPivot.y + Math.sin(angle) * initialDistances.tip;
-
                 paddle.handle.x = currentPivot.x - Math.cos(angle) * initialDistances.handle;
                 paddle.handle.y = currentPivot.y - Math.sin(angle) * initialDistances.handle;
                 draw();
             }
         }
 
-        function handleTouchEnd() {
-            isRotating = false;
-            isMoving = false;
-            isBgDragging = false;
-            currentPivot = null; 
-        }
+        function handleTouchEnd() { isRotating = false; isMoving = false; isBgDragging = false; currentPivot = null; }
 
         // --- Background Image Handlers ---
         function handleImageUpload(e) {
@@ -536,8 +550,7 @@
                         bgImageState.naturalWidth = bgImage.naturalWidth;
                         bgImageState.naturalHeight = bgImage.naturalHeight;
                         bgControls.classList.remove('hidden');
-                        bgScale.value = 1;
-                        bgImageState.scale = 1;
+                        bgScale.value = 1; bgImageState.scale = 1;
                         bgImageState.x = (bgContainer.clientWidth - bgImage.naturalWidth) / 2;
                         bgImageState.y = (bgContainer.clientHeight - bgImage.naturalHeight) / 2;
                         updateImageTransform();
@@ -547,87 +560,44 @@
             }
         }
 
-        function handleImageScale(e) {
-            bgImageState.scale = parseFloat(e.target.value);
-            updateImageTransform();
-        }
-
-        function updateImageTransform() {
-            const imgWidth = bgImageState.naturalWidth * bgImageState.scale;
-            const imgHeight = bgImageState.naturalHeight * bgImageState.scale;
-            bgImage.style.width = `${imgWidth}px`;
-            bgImage.style.height = `${imgHeight}px`;
-            bgImage.style.left = `${bgImageState.x}px`;
-            bgImage.style.top = `${bgImageState.y}px`;
-        }
+        function handleImageScale(e) { bgImageState.scale = parseFloat(e.target.value); updateImageTransform(); }
+        function updateImageTransform() { const imgWidth = bgImageState.naturalWidth * bgImageState.scale; const imgHeight = bgImageState.naturalHeight * bgImageState.scale; bgImage.style.width = `${imgWidth}px`; bgImage.style.height = `${imgHeight}px`; bgImage.style.left = `${bgImageState.x}px`; bgImage.style.top = `${bgImageState.y}px`; }
 
         // --- Utility Functions ---
-        function getMousePos(evt) {
-            const rect = canvas.getBoundingClientRect();
-            return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
-        }
-        function getTouchPos(touch) {
-            const rect = canvas.getBoundingClientRect();
-            return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
-        }
-        function getMidpoint(t1, t2) {
-            const p1 = getTouchPos(t1);
-            const p2 = getTouchPos(t2);
-            return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-        }
+        function getMousePos(evt) { const rect = paddleCanvas.getBoundingClientRect(); return { x: evt.clientX - rect.left, y: evt.clientY - rect.top }; }
+        function getTouchPos(touch) { const rect = paddleCanvas.getBoundingClientRect(); return { x: touch.clientX - rect.left, y: touch.clientY - rect.top }; }
+        function getMidpoint(t1, t2) { const p1 = getTouchPos(t1); const p2 = getTouchPos(t2); return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }; }
         function distance(p1, p2) { return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2)); }
-        function lineIntersection(p1, p2, p3, p4) {
-            const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
-            if (den === 0) return null;
-            const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den;
-            const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den;
-            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-                return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
-            }
-            return null;
-        }
-        function closestPointOnLine(p1, p2, p) {
-            const l2 = Math.pow(distance(p1, p2), 2);
-            if (l2 === 0) return p1;
-            const t = Math.max(0, Math.min(1, ((p.x - p1.x) * (p2.x - p1.x) + (p.y - p1.y) * (p2.y - p1.y)) / l2));
-            return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
-        }
-
+        function lineIntersection(p1, p2, p3, p4) { const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x); if (den === 0) return null; const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den; const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den; if (t >= 0 && t <= 1 && u >= 0 && u <= 1) { return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) }; } return null; }
+        function closestPointOnLine(p1, p2, p) { const l2 = Math.pow(distance(p1, p2), 2); if (l2 === 0) return p1; const t = Math.max(0, Math.min(1, ((p.x - p1.x) * (p2.x - p1.x) + (p.y - p1.y) * (p2.y - p1.y)) / l2)); return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) }; }
+        
         // --- Event Listener Setup ---
-        const containerForMouse = canvas.parentElement;
+        const containerForMouse = paddleCanvas.parentElement;
         containerForMouse.addEventListener('mousedown', handleMouseDown);
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
         containerForMouse.addEventListener('contextmenu', (e) => e.preventDefault());
-
-        // Touch Listeners
         containerForMouse.addEventListener('touchstart', handleTouchStart, { passive: false });
         window.addEventListener('touchmove', handleTouchMove, { passive: false });
         window.addEventListener('touchend', handleTouchEnd);
         window.addEventListener('touchcancel', handleTouchEnd);
-
-
-        anchorBtn.addEventListener('click', () => {
-            isSettingAnchor = !isSettingAnchor;
-            anchorBtn.textContent = isSettingAnchor ? 'Cancel Anchor' : 'Set Anchor';
-            anchorBtn.classList.toggle('bg-yellow-500', isSettingAnchor);
-            anchorBtn.classList.toggle('hover:bg-yellow-600', isSettingAnchor);
-            anchorBtn.classList.toggle('bg-cyan-600', !isSettingAnchor);
-            anchorBtn.classList.toggle('hover:bg-cyan-700', !isSettingAnchor);
+        traceBtn.addEventListener('click', () => { 
+            isTracing = !isTracing; 
+            traceBtn.classList.toggle('bg-pink-500', isTracing); 
+            traceBtn.classList.toggle('hover:bg-pink-600', isTracing); 
+            traceBtn.classList.toggle('bg-green-600', !isTracing); 
+            traceBtn.classList.toggle('hover:bg-green-700', !isTracing); 
+            if (isTracing) {
+                traceInterval = setInterval(recordLineTrace, 100);
+            } else {
+                clearInterval(traceInterval);
+                traceInterval = null;
+                resetTrace(); 
+            }
+            draw(); 
         });
-        
-        bgModeBtn.addEventListener('click', () => {
-            isBgMode = !isBgMode;
-            bgModeBtn.textContent = isBgMode ? 'Control Paddle' : 'Control BG';
-            bgModeBtn.classList.toggle('bg-green-500', isBgMode);
-            bgModeBtn.classList.toggle('hover:bg-green-600', isBgMode);
-            bgModeBtn.classList.toggle('bg-purple-600', !isBgMode);
-            bgModeBtn.classList.toggle('hover:bg-purple-700', !isBgMode);
-            
-            canvas.style.pointerEvents = isBgMode ? 'none' : 'auto';
-            controlsPanel.classList.toggle('panel-hidden-right', !isBgMode);
-        });
-
+        anchorBtn.addEventListener('click', () => { isSettingAnchor = !isSettingAnchor; anchorBtn.textContent = isSettingAnchor ? 'Cancel Anchor' : 'Set Anchor'; anchorBtn.classList.toggle('bg-yellow-500', isSettingAnchor); anchorBtn.classList.toggle('hover:bg-yellow-600', isSettingAnchor); anchorBtn.classList.toggle('bg-cyan-600', !isSettingAnchor); anchorBtn.classList.toggle('hover:bg-cyan-700', !isSettingAnchor); });
+        bgModeBtn.addEventListener('click', () => { isBgMode = !isBgMode; bgModeBtn.textContent = isBgMode ? 'Control Paddle' : 'Control BG'; bgModeBtn.classList.toggle('bg-green-500', isBgMode); bgModeBtn.classList.toggle('hover:bg-green-600', isBgMode); bgModeBtn.classList.toggle('bg-purple-600', !isBgMode); bgModeBtn.classList.toggle('hover:bg-purple-700', !isBgMode); paddleCanvas.style.pointerEvents = isBgMode ? 'none' : 'auto'; controlsPanel.classList.toggle('panel-hidden-right', !isBgMode); });
         resetBtn.addEventListener('click', init);
         uploadBtn.addEventListener('click', () => bgUpload.click());
         bgUpload.addEventListener('change', handleImageUpload);
@@ -640,26 +610,5 @@
         window.addEventListener('load', resizeCanvas);
 
     </script>
-
-    <a href="https://buymeacoffee.com/jysportech" target="_blank" 
-    rel="noopener noreferrer" id="bmcButton" style="
-        position: fixed;
-        left: 20px;
-        bottom: 20px;
-        z-index: 50;
-        background: rgba(0,0,0,0.7);
-        border-radius: 12px;
-        padding: 8px;
-        display: flex;
-        align-items: center;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-    "    title="Buy me a coffee!"
->
-    <img 
-        src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-        alt="Buy Me a Coffee" 
-        style="height: 40px; width: auto;"
-    >
-</a>
 </body>
 </html>
